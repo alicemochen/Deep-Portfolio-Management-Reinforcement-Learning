@@ -1,0 +1,48 @@
+{
+  "start_date": "2016-01-01",
+  "end_date": "2022-07-01",
+  "names": [
+    "AAPL",
+    "FB",
+    "AMZN",
+    "MSFT",
+    "T",
+    "VZ",
+    "CMCSA",
+    "IBM",
+    "CRM",
+    "INTC"
+  ],
+  "feature_func": "get_stock_features_default",
+  "dict_hp_net": {
+    "n_filter_1": 2,
+    "n_filter_2": 20,
+    "kernel1_size": 1
+  },
+  "dict_hp_pb": {
+    "batch_size": 50,
+    "ratio_train": 0.6,
+    "ratio_val": 0.2,
+    "length_tensor": 10,
+    "ratio_greedy":0.8,
+    "ratio_regul": 0.1
+  },
+  "dict_hp_opt": {
+    "regularization": 1e-8,
+    "learning": 0.09
+  },
+  "dict_fin": {
+    "trading_cost": 0.0025,
+    "interest_rate": 0.00008,
+    "cash_bias_init": 0.7},
+  "dict_train": {
+    "pf_init_train": 10000,
+    "w_init_train": "d",
+    "n_episodes":2,
+    "n_batches":10},
+  "dict_test": {
+    "pf_init_test": 10000,
+    "w_init_test": "d"
+  },
+  "sample_bias": 5e-5
+}

@@ -25,25 +25,22 @@ class TradeEnv():
     of the time span (train -> | time T | -> test)
     """
 
-    def __init__(self, path = './np_data/input.npy', window_length=50,
-                 portfolio_value= 10000, trading_cost= 0.25/100,interest_rate= 0.02/250, train_size = 0.7):
+    def __init__(self, data, config):
         
         #path to numpy data
-        self.path = path
-        #load the whole data
-        self.data = np.load(self.path)
+        self.data = data
 
 
         #parameters
-        self.portfolio_value = portfolio_value
-        self.window_length=window_length
-        self.trading_cost = trading_cost
-        self.interest_rate = interest_rate
+        self.portfolio_value = config['dict_test']['pf_init_train']
+        self.window_length= config['dict_hp_pb']['length_tensor']
+        self.trading_cost = config["dict_fin"]["trading_cost"]
+        self.interest_rate = config["dict_fin"]["interest_rate"]
 
         #number of stocks and features
         self.nb_stocks = self.data.shape[1]
         self.nb_features = self.data.shape[0]
-        self.end_train = int((self.data.shape[2]-self.window_length)*train_size)
+        self.end_train = int((self.data.shape[2]-self.window_length)*config['dict_hp_pb']['ratio_train'])
         
         #init state and index
         self.index = None
