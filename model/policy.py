@@ -1,16 +1,24 @@
+import os
+
 import tensorflow.compat.v1 as tf
 import numpy as np
 
 # define neural net \pi_\phi(s) as a class
+from model.pvm import PVM
+from utils.utils import get_random_action, eval_perf
+
+
 class Policy(object):
     '''
     This class is used to instanciate the policy network agent
 
     '''
 
-    def __init__(self, nb_stocks, sess, optimizer, nb_feature_map, config):
+    def __init__(self, sess, env, config):
         # parameters
         self.config = config
+        self.env = env
+        self.sess = sess
         self.trading_cost = config["dict_fin"]["trading_cost"]
         self.interest_rate = config["dict_fin"]["interest_rate"]
         self.n_filter_1 = config['dict_hp_net']['n_filter_1']
@@ -18,14 +26,15 @@ class Policy(object):
         # n is number of trading period
         self.length_tensor = config['dict_hp_pb']['length_tensor']
         # m is number of stocks
-        self.nb_stocks = nb_stocks
+        self.nb_stocks = config["nb_stocks"]
+        self.input_dir = config["input_dir"]
 
         with tf.variable_scope("Inputs"):
             # Placeholder
 
             # tensor of the prices
             self.X_t = tf.placeholder(
-                tf.float32, [None, nb_feature_map, self.nb_stocks, self.length_tensor])  # The Price tensor
+                tf.float32, [None, config["nb_feature_map"], self.nb_stocks, self.length_tensor])  # The Price tensor
             # weights at the previous time step
             self.W_previous = tf.placeholder(tf.float32, [None, self.nb_stocks + 1])
             # portfolio value at the previous time step
@@ -34,6 +43,9 @@ class Policy(object):
             self.dailyReturn_t = tf.placeholder(tf.float32, [None, self.nb_stocks])
 
             # self.pf_value_previous_eq = tf.placeholder(tf.float32, [None, 1])
+
+        with tf.variable_scope("Optimizer"):
+            self.optimizer = tf.train.AdamOptimizer(self.config['dict_hp_opt']['learning'])
 
         with tf.variable_scope("Policy_Model"):
             # variable of the cash bias
@@ -152,11 +164,8 @@ class Policy(object):
         # objective function
         # maximize reward over the batch
         # min(-r) = max(r)
-        self.train_op = optimizer.minimize(-self.adjusted_reward)
+        self.train_op = self.optimizer.minimize(-self.adjusted_reward)
 
-        # some bookkeeping
-        self.optimizer = optimizer
-        self.sess = sess
 
     def compute_W(self, X_t_, W_previous_):
         """
@@ -169,13 +178,76 @@ class Policy(object):
 
         return self.sess.run(tf.squeeze(self.action), feed_dict={self.X_t: X_t_, self.W_previous: W_previous_})
 
-    def train(self, X_t_, W_previous_, pf_value_previous_, dailyReturn_t_):
+    def train(self):
         """
         This function trains the neural network
         maximizing the reward
         the input is a batch of the differents values
         """
-        self.sess.run(self.train_op, feed_dict={self.X_t: X_t_,
-                                                self.W_previous: W_previous_,
-                                                self.pf_value_previous: pf_value_previous_,
-                                                self.dailyReturn_t: dailyReturn_t_})
+        train_save_dir = f"{self.input_dir}\\train_graphs"
+        if not os.path.exists(train_save_dir):
+            os.mkdir(train_save_dir)
+        list_final_pf = list()
+        total_steps_train = int(self.config['dict_hp_pb']['ratio_train'] * self.config["trading_period"])
+        w_init_train = np.array(np.array([1] + [0] * self.config["nb_stocks"]))
+        for e in range(self.config["dict_train"]["n_episodes"]):
+            print('Episode:', e)
+            # init the PVM with the training parameters
+            memory = PVM(self.config, total_steps_train, w_init_train)
+
+            for nb in range(self.config["dict_train"]["n_batches"]):
+                # draw the starting point of the batch
+                i_start = memory.draw()
+
+                # reset the environment with the weight from PVM at the starting point
+                # reset also with a portfolio value with initial portfolio value
+                state, done = self.env.reset(memory.get_W(i_start), self.config['dict_train']['pf_init_train'], t=i_start)
+
+                list_X_t, list_W_previous, list_pf_value_previous, list_dailyReturn_t = [], [], [], []
+
+                for bs in range(self.config["dict_hp_pb"]["batch_size"]):
+
+                    # load the different inputs from the previous loaded state
+                    X_t = state[0].reshape([-1] + list(state[0].shape))
+                    W_previous = state[1].reshape([-1] + list(state[1].shape))
+                    pf_value_previous = state[2]
+
+                    if np.random.rand() < self.config["dict_hp_pb"]["ratio_greedy"]:
+                        # print('go')
+                        # computation of the action of the agent
+                        action = self.compute_W(X_t, W_previous)
+                    else:
+                        action = get_random_action(self.config["nb_stocks"])
+
+                    # given the state and the action, call the environment to go one time step later
+                    state, reward, done = self.env.step(action)
+
+                    # get the new state
+                    X_next = state[0]
+                    W_t = state[1]
+                    pf_value_t = state[2]
+
+                    # let us compute the returns
+                    dailyReturn_t = X_next[-1, :, -1]
+                    # update into the PVM
+                    memory.update(i_start + bs, W_t)
+                    # store elements
+                    list_X_t.append(X_t.reshape(state[0].shape))
+                    list_W_previous.append(W_previous.reshape(state[1].shape))
+                    list_pf_value_previous.append([pf_value_previous])
+                    list_dailyReturn_t.append(dailyReturn_t)
+
+                    if bs == self.config["dict_hp_pb"]["batch_size"] - 1:
+                        list_final_pf.append(pf_value_t)
+
+                list_W_previous = np.array(list_W_previous)
+                list_pf_value_previous = np.array(list_pf_value_previous)
+                list_dailyReturn_t = np.array(list_dailyReturn_t)
+                # for each batch, train the network to maximize the reward
+                self.sess.run(self.train_op, feed_dict={self.X_t: list_X_t,
+                                                        self.W_previous: list_W_previous,
+                                                        self.pf_value_previous: list_pf_value_previous,
+                                                        self.dailyReturn_t: list_dailyReturn_t})
+
+            # eval_perf(e, data, actor, total_steps_train, total_steps_val, w_init_eval, config, train_save_dir)
+
